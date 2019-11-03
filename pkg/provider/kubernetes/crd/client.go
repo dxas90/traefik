@@ -20,6 +20,9 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	knativev1alpha1  "knative.dev/serving/pkg/apis/networking/v1alpha1"
+	knativeclientset "knative.dev/serving/pkg/client/clientset/versioned"
+	knativeinformers "knative.dev/serving/pkg/client/informers/externalversions"
 )
 
 const resyncPeriod = 10 * time.Minute
@@ -46,12 +49,16 @@ func (reh *resourceEventHandler) OnDelete(obj interface{}) {
 type Client interface {
 	WatchAll(namespaces []string, stopCh <-chan struct{}) (<-chan interface{}, error)
 
+	
+	UpdateKnativeIngressStatus(*knativev1alpha1.Ingress) error
+	GetKnativeIngressRoutes() []*knativev1alpha1.Ingress
 	GetIngressRoutes() []*v1alpha1.IngressRoute
 	GetIngressRouteTCPs() []*v1alpha1.IngressRouteTCP
 	GetMiddlewares() []*v1alpha1.Middleware
 	GetTLSOptions() []*v1alpha1.TLSOption
 
 	GetIngresses() []*extensionsv1beta1.Ingress
+	GetServerlessService(namespace, name string) (*knativev1alpha1.ServerlessService, bool, error)
 	GetService(namespace, name string) (*corev1.Service, bool, error)
 	GetSecret(namespace, name string) (*corev1.Secret, bool, error)
 	GetEndpoints(namespace, name string) (*corev1.Endpoints, bool, error)
@@ -62,9 +69,11 @@ type Client interface {
 type clientWrapper struct {
 	csCrd  *versioned.Clientset
 	csKube *kubernetes.Clientset
+	csKnative *knativeclientset.Clientset
 
 	factoriesCrd  map[string]externalversions.SharedInformerFactory
 	factoriesKube map[string]informers.SharedInformerFactory
+	factoriesKnative  map[string]knativeinformers.SharedInformerFactory
 
 	labelSelector labels.Selector
 
@@ -83,15 +92,22 @@ func createClientFromConfig(c *rest.Config) (*clientWrapper, error) {
 		return nil, err
 	}
 
-	return newClientImpl(csKube, csCrd), nil
+	csKnative, err := knativeclientset.NewForConfig(c)
+	if err != nil {
+		return nil, err
+	}
+
+	return newClientImpl(csKube, csCrd, csKnative), nil
 }
 
-func newClientImpl(csKube *kubernetes.Clientset, csCrd *versioned.Clientset) *clientWrapper {
+func newClientImpl(csKube *kubernetes.Clientset, csCrd *versioned.Clientset, csKnative *knativeclientset.Clientset) *clientWrapper {
 	return &clientWrapper{
 		csCrd:         csCrd,
 		csKube:        csKube,
+		csKnative: 	   csKnative,
 		factoriesCrd:  make(map[string]externalversions.SharedInformerFactory),
 		factoriesKube: make(map[string]informers.SharedInformerFactory),
+		factoriesKnative: make(map[string]knativeinformers.SharedInformerFactory),
 	}
 }
 
@@ -166,13 +182,19 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 		factoryKube.Core().V1().Services().Informer().AddEventHandler(eventHandler)
 		factoryKube.Core().V1().Endpoints().Informer().AddEventHandler(eventHandler)
 
+		factory := knativeinformers.NewSharedInformerFactoryWithOptions(c.csKnative, resyncPeriod, knativeinformers.WithNamespace(ns))
+		factory.Networking().V1alpha1().Ingresses().Informer().AddEventHandler(eventHandler)
+		factory.Networking().V1alpha1().ServerlessServices().Informer().AddEventHandler(eventHandler)
+
 		c.factoriesCrd[ns] = factoryCrd
 		c.factoriesKube[ns] = factoryKube
+		c.factoriesKnative[ns] = factory
 	}
 
 	for _, ns := range namespaces {
 		c.factoriesCrd[ns].Start(stopCh)
 		c.factoriesKube[ns].Start(stopCh)
+		c.factoriesKnative[ns].Start(stopCh)
 	}
 
 	for _, ns := range namespaces {
@@ -183,6 +205,12 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 		}
 
 		for t, ok := range c.factoriesKube[ns].WaitForCacheSync(stopCh) {
+			if !ok {
+				return nil, fmt.Errorf("timed out waiting for controller caches to sync %s in namespace %q", t.String(), ns)
+			}
+		}
+
+		for t, ok := range c.factoriesKnative[ns].WaitForCacheSync(stopCh) {
 			if !ok {
 				return nil, fmt.Errorf("timed out waiting for controller caches to sync %s in namespace %q", t.String(), ns)
 			}
@@ -199,6 +227,40 @@ func (c *clientWrapper) WatchAll(namespaces []string, stopCh <-chan struct{}) (<
 	}
 
 	return eventCh, nil
+}
+
+func (c *clientWrapper) GetKnativeIngressRoutes() []*knativev1alpha1.Ingress {
+	var result []*knativev1alpha1.Ingress
+
+	for ns, factory := range c.factoriesKnative {
+		ings, err := factory.Networking().V1alpha1().Ingresses().Lister().List(labels.Everything()) // todo: label selector
+		if err != nil {
+			log.Errorf("Failed to list ingresses in namespace %s: %s", ns, err)
+		}
+		result = append(result, ings...)
+	}
+
+	return result
+}
+
+func (c *clientWrapper) UpdateKnativeIngressStatus(ingressRoute *knativev1alpha1.Ingress) error {
+	_, err := c.csKnative.NetworkingV1alpha1().Ingresses(ingressRoute.Namespace).UpdateStatus(ingressRoute)
+
+	if err != nil {
+		return fmt.Errorf("failed to update knative ingress status %s/%s: %v", ingressRoute.Namespace, ingressRoute.Name, err)
+	}
+	log.Infof("Updated status on knative ingress %s/%s", ingressRoute.Namespace, ingressRoute.Name)
+	return err
+}
+
+func (c *clientWrapper) GetServerlessService(namespace, name string) (*knativev1alpha1.ServerlessService, bool, error) {
+	if !c.isWatchedNamespace(namespace) {
+		return nil, false, fmt.Errorf("failed to get service %s/%s: namespace is not within watched namespaces", namespace, name)
+	}
+
+	service, err := c.factoriesKnative[c.lookupNamespace(namespace)].Networking().V1alpha1().ServerlessServices().Lister().ServerlessServices(namespace).Get(name)
+	exist, err := translateNotFoundError(err)
+	return service, exist, err
 }
 
 func (c *clientWrapper) GetIngressRoutes() []*v1alpha1.IngressRoute {

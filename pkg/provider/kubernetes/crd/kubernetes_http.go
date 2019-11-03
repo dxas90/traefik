@@ -14,11 +14,7 @@ import (
 )
 
 func (p *Provider) loadIngressRouteConfiguration(ctx context.Context, client Client, tlsConfigs map[string]*tls.CertAndStores) *dynamic.HTTPConfiguration {
-	conf := &dynamic.HTTPConfiguration{
-		Routers:     map[string]*dynamic.Router{},
-		Middlewares: map[string]*dynamic.Middleware{},
-		Services:    map[string]*dynamic.Service{},
-	}
+	conf := p.loadKnativeIngressRouteConfiguration(ctx, client, tlsConfigs)
 
 	for _, ingressRoute := range client.GetIngressRoutes() {
 		ctxRt := log.With(ctx, log.Str("ingress", ingressRoute.Name), log.Str("namespace", ingressRoute.Namespace))
