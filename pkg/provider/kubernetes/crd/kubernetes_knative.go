@@ -41,7 +41,6 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 
 		// create host router
 		for _, route := range ingressRoute.Spec.Rules {
-		
 			// no service
 			if route.HTTP == nil {
 				continue 
@@ -53,6 +52,32 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 			}
 			// create path router
 			for _, pathroute := range route.HTTP.Paths {
+				// AppendHeaders Middleware
+				var mds []string
+				if pathroute.AppendHeaders != nil && len(pathroute.AppendHeaders) > 0 {
+					middlewareID := makeID(ingressName, "AppendHeader")
+					conf.Middlewares[middlewareID] = &dynamic.Middleware{
+						Headers: &dynamic.Headers {
+							CustomRequestHeaders: pathroute.AppendHeaders, 
+						},
+					}
+					mds = append(mds, middlewareID)
+				}
+
+				// Retry Middleware
+				if pathroute.Retries != nil {
+					middlewareID := makeID(ingressName, "Retry")
+					conf.Middlewares[middlewareID] = &dynamic.Middleware{
+						Retry: &dynamic.Retry {
+							Attempts:  pathroute.Retries.Attempts,
+							//Timeout:  pathroute.Retries.PerTryTimeout,
+						},
+					}
+					mds = append(mds, middlewareID)
+				}
+
+				// Timout Middleware
+
 				Match := fmt.Sprintf("(%v)", strings.Join(hosts, " || "))
 				if len(pathroute.Path) > 0 {
 					Match += fmt.Sprintf(" && PathPrefix(`%v`)", pathroute.Path)
@@ -65,11 +90,21 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 				}
 	
 				serviceName := makeID(ingressRoute.Namespace, key)
-	
-				// TODO: AppendHeaders middleware
 				for _, service := range pathroute.Splits {
-					// TODO: AppendHeaders middleware
-
+					// TODO: AppendHeaders middleware per service
+					// mds := make([]string, len(mds_))
+					// copy(mds, mds_)
+					// if service.AppendHeaders != nil && len(service.AppendHeaders) > 0 {
+					// 	middlewareID := makeID(fmt.Sprintf("%v-%v", ingressName, i), "AppendHeader")
+					// 	conf.Middlewares[middlewareID] = &dynamic.Middleware{
+					// 		Headers: &dynamic.Headers {
+					// 			CustomRequestHeaders: service.AppendHeaders, 
+					// 		},
+					// 	}
+					// 	mds_ = append(mds_, middlewareID)
+					// }
+			
+			
 					// TODO: prot from string
 					balancerServerHTTP, err := createKnativeLoadBalancerServerHTTP(client, service.ServiceNamespace, 
 						v1alpha1.Service{Name:service.ServiceName, Port:int32(service.ServicePort.IntValue())})
@@ -96,16 +131,12 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 						val := service.Percent 
 						srv.Weight = &val
 					}
-	
+
 					if conf.Services[serviceName] == nil {
 						conf.Services[serviceName] = &dynamic.Service{Weighted: &dynamic.WeightedRoundRobin{}}
 					}
 					conf.Services[serviceName].Weighted.Services = append(conf.Services[serviceName].Weighted.Services, srv)
 				}
-
-				// TODO: middleware
-				var mds []string
-	
 				// TODO: entrypoint
 				conf.Routers[serviceName] = &dynamic.Router{
 					Middlewares: mds,
@@ -114,40 +145,42 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 					Rule:        Match,
 					Service:     serviceName,
 				}
-	
-				// TODO: TLS
 			}
 		}
 		now := knativeapis.VolatileTime{Inner: metav1.Time{time.Now()}}
-		ingressRoute.SetStatus(
-			knativev1alpha1.IngressStatus{
-				duckv1.Status{
-					ObservedGeneration: ingressRoute.GetGeneration(),
-					Conditions: duckv1.Conditions{
-	                                    knativeapis.Condition{
-                                                Type:    knativev1alpha1.IngressConditionReady,
-                                                Status:  corev1.ConditionTrue,
-						LastTransitionTime: now,
-                                            },
-	                                    knativeapis.Condition{
-                                                Type:    knativev1alpha1.IngressConditionNetworkConfigured,
-                                                Status:  corev1.ConditionTrue,
-						LastTransitionTime: now,
-                                            },
-	                                    knativeapis.Condition{
-                                                Type:    knativev1alpha1.IngressConditionLoadBalancerReady,
-                                                Status:  corev1.ConditionTrue,
-						LastTransitionTime: now,
-                                            },
+		if ingressRoute.GetStatus() == nil || 
+			!ingressRoute.GetStatus().IsReady() ||
+			ingressRoute.GetGeneration() != ingressRoute.GetStatus().ObservedGeneration {
+			ingressRoute.SetStatus(
+				knativev1alpha1.IngressStatus{
+					duckv1.Status{
+						ObservedGeneration: ingressRoute.GetGeneration(),
+						Conditions: duckv1.Conditions{
+											knativeapis.Condition{
+													Type:    knativev1alpha1.IngressConditionReady,
+													Status:  corev1.ConditionTrue,
+													LastTransitionTime: now,
+												},
+											knativeapis.Condition{
+													Type:    knativev1alpha1.IngressConditionNetworkConfigured,
+													Status:  corev1.ConditionTrue,
+													LastTransitionTime: now,
+												},
+											knativeapis.Condition{
+													Type:    knativev1alpha1.IngressConditionLoadBalancerReady,
+													Status:  corev1.ConditionTrue,
+													LastTransitionTime: now,
+												},
+						},
 					},
-				},
-				nil,
-				nil,
-				nil,
-			})
-		err := client.UpdateKnativeIngressStatus(ingressRoute)
-		if err != nil {
-			logger.Errorf("error %v", err)
+					nil,
+					nil,
+					nil,
+				})
+			err := client.UpdateKnativeIngressStatus(ingressRoute)
+			if err != nil {
+				logger.Errorf("error %v", err)
+			}
 		}
 	}
 
