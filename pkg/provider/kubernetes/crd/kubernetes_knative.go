@@ -53,7 +53,8 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 			// create path router
 			for _, pathroute := range route.HTTP.Paths {
 				// AppendHeaders Middleware
-				var mds []string
+				var mds_ []string
+
 				if pathroute.AppendHeaders != nil && len(pathroute.AppendHeaders) > 0 {
 					middlewareID := makeID(ingressName, "AppendHeader")
 					conf.Middlewares[middlewareID] = &dynamic.Middleware{
@@ -61,7 +62,7 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 							CustomRequestHeaders: pathroute.AppendHeaders, 
 						},
 					}
-					mds = append(mds, middlewareID)
+					mds_ = append(mds_, middlewareID)
 				}
 
 				// Retry Middleware
@@ -73,39 +74,39 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 							//Timeout:  pathroute.Retries.PerTryTimeout,
 						},
 					}
-					mds = append(mds, middlewareID)
+					mds_ = append(mds_, middlewareID)
 				}
 
-				// Timout Middleware
+				// TODO: Timout Middleware needed.
 
 				Match := fmt.Sprintf("(%v)", strings.Join(hosts, " || "))
 				if len(pathroute.Path) > 0 {
 					Match += fmt.Sprintf(" && PathPrefix(`%v`)", pathroute.Path)
 				}
 				
-				key, err := makeServiceKey(Match, ingressName)
-				if err != nil {
-					logger.Error(err)
-					continue
-				}
-	
-				serviceName := makeID(ingressRoute.Namespace, key)
 				for _, service := range pathroute.Splits {
-					// TODO: AppendHeaders middleware per service
-					// mds := make([]string, len(mds_))
-					// copy(mds, mds_)
-					// if service.AppendHeaders != nil && len(service.AppendHeaders) > 0 {
-					// 	middlewareID := makeID(fmt.Sprintf("%v-%v", ingressName, i), "AppendHeader")
-					// 	conf.Middlewares[middlewareID] = &dynamic.Middleware{
-					// 		Headers: &dynamic.Headers {
-					// 			CustomRequestHeaders: service.AppendHeaders, 
-					// 		},
-					// 	}
-					// 	mds_ = append(mds_, middlewareID)
-					// }
+					serviceName := makeID(ingressRoute.Namespace, service.ServiceName)
+					mds := make([]string, len(mds_))
+					copy(mds, mds_)
+					if service.AppendHeaders != nil && len(service.AppendHeaders) > 0 {
+						middlewareID := makeID(serviceName, "AppendHeader")
+						conf.Middlewares[middlewareID] = &dynamic.Middleware{
+							Headers: &dynamic.Headers {
+								CustomRequestHeaders: service.AppendHeaders, 
+							},
+						}
+						mds = append(mds, middlewareID)
+					}
+
+					// TODO: entrypoint, Priority
+					conf.Routers[serviceName] = &dynamic.Router{
+						Middlewares: mds,
+						//Priority:    0,
+						//EntryPoints: ingressRoute.Spec.EntryPoints,
+						Rule:        Match,
+						Service:     serviceName,
+					}
 			
-			
-					// TODO: prot from string
 					balancerServerHTTP, err := createKnativeLoadBalancerServerHTTP(client, service.ServiceNamespace, 
 						v1alpha1.Service{Name:service.ServiceName, Port:int32(service.ServicePort.IntValue())})
 					if err != nil {
@@ -136,14 +137,6 @@ func (p *Provider) loadKnativeIngressRouteConfiguration(ctx context.Context, cli
 						conf.Services[serviceName] = &dynamic.Service{Weighted: &dynamic.WeightedRoundRobin{}}
 					}
 					conf.Services[serviceName].Weighted.Services = append(conf.Services[serviceName].Weighted.Services, srv)
-				}
-				// TODO: entrypoint
-				conf.Routers[serviceName] = &dynamic.Router{
-					Middlewares: mds,
-					Priority:    0, // TODO : config
-					//EntryPoints: ingressRoute.Spec.EntryPoints,
-					Rule:        Match,
-					Service:     serviceName,
 				}
 			}
 		}
