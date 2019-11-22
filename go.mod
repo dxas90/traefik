@@ -3,8 +3,7 @@ module github.com/containous/traefik/v2
 go 1.13
 
 require (
-	contrib.go.opencensus.io/exporter/prometheus v0.1.0 // indirect
-	contrib.go.opencensus.io/exporter/stackdriver v0.12.8 // indirect
+	cloud.google.com/go v0.45.1 // indirect
 	github.com/BurntSushi/toml v0.3.1
 	github.com/ExpediaDotCom/haystack-client-go v0.0.0-20190315171017-e7edbdf53a61
 	github.com/Masterminds/goutils v1.1.0 // indirect
@@ -16,11 +15,12 @@ require (
 	github.com/VividCortex/gohistogram v1.0.0 // indirect
 	github.com/abbot/go-http-auth v0.0.0-00010101000000-000000000000
 	github.com/abronan/valkeyrie v0.0.0-20190822142731-f2e1850dc905
+	github.com/aws/aws-sdk-go v1.23.20 // indirect
 	github.com/c0va23/go-proxyprotocol v0.9.1
 	github.com/cenkalti/backoff/v3 v3.0.0
+	github.com/census-instrumentation/opencensus-proto v0.2.1 // indirect
 	github.com/containerd/continuity v0.0.0-20190426062206-aaeac12a7ffc // indirect
 	github.com/containous/alice v0.0.0-20181107144136-d83ebdd94cbd
-	github.com/containous/go-bindata v1.0.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
 	github.com/davecgh/go-spew v1.1.1
 	github.com/docker/distribution v2.7.1+incompatible // indirect
@@ -41,6 +41,7 @@ require (
 	github.com/go-check/check v0.0.0-00010101000000-000000000000
 	github.com/go-kit/kit v0.9.0
 	github.com/golang/protobuf v1.3.2
+	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/go-containerregistry v0.0.0-20191029173801-50b26ee28691 // indirect
 	github.com/google/go-github/v28 v28.0.0
 	github.com/gorilla/mux v1.7.3
@@ -83,8 +84,13 @@ require (
 	github.com/vdemeester/shakers v0.1.0
 	github.com/vulcand/oxy v1.0.0
 	github.com/vulcand/predicate v1.1.0
+	go.opencensus.io v0.22.1 // indirect
 	golang.org/x/net v0.0.0-20190930134127-c5a3c61f89f3
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
 	golang.org/x/time v0.0.0-20190921001708-c4c64cad1fd0
+	google.golang.org/api v0.10.0 // indirect
+	google.golang.org/appengine v1.6.2 // indirect
+	google.golang.org/genproto v0.0.0-20190911173649-1774047e7e51 // indirect
 	google.golang.org/grpc v1.24.0
 	gopkg.in/DataDog/dd-trace-go.v1 v1.16.1
 	gopkg.in/fsnotify.v1 v1.4.7
